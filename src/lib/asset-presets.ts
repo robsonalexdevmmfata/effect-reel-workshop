@@ -53,14 +53,14 @@ export const ASSET_KINDS: { kind: AssetKind; label: string; extra: string }[] = 
 ];
 
 export function buildAssetPrompt(idea: string, style: StyleId, kind: AssetKind): string {
-  const s = STYLES.find((x) => x.id === style)!;
-  const k = ASSET_KINDS.find((x) => x.kind === kind)!;
+  const s = STYLES.find((x) => x.id === style) ?? STYLES[0]!;
+  const k = ASSET_KINDS.find((x) => x.kind === kind) ?? ASSET_KINDS[0]!;
   return [
     idea.trim(),
     s.descriptor,
     k.extra,
     "isolated game asset for an AR face filter",
-    "flat solid pure chroma green background #00FF00, no green in the subject, no shadow, no text",
+    "isolated on a plain flat solid white background, no background scenery, no shadow, no text",
   ].join(", ");
 }
 

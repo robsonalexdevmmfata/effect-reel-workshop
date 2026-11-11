@@ -1,18 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { removeGreenBackground } from "@/lib/chroma";
+import { removeFlatBackground } from "@/lib/chroma";
 import { OUTPUT_VERTICAL, buildStages, outputFileName } from "@/lib/video-pipeline";
 
-describe("transparent PNG chroma key", () => {
-  it("makes pure green background pixels fully transparent", () => {
-    const px = new Uint8ClampedArray([0, 255, 0, 255]);
-    removeGreenBackground(px);
+describe("transparent PNG background removal", () => {
+  // 5x5 white image with a 1px red subject in the centre.
+  function image() {
+    const px = new Uint8ClampedArray(5 * 5 * 4).fill(255);
+    const c = (2 * 5 + 2) * 4;
+    px[c + 1] = 0;
+    px[c + 2] = 0;
+    return px;
+  }
+
+  it("makes the flat background fully transparent", () => {
+    const px = removeFlatBackground(image(), 5, 5);
     expect(px[3]).toBe(0);
+    expect(px[(4 * 5 + 4) * 4 + 3]).toBe(0);
   });
 
-  it("keeps non-green subject pixels opaque", () => {
-    const px = new Uint8ClampedArray([254, 44, 85, 255]);
-    removeGreenBackground(px);
-    expect(px[3]).toBe(255);
+  it("keeps the subject opaque", () => {
+    const px = removeFlatBackground(image(), 5, 5);
+    expect(px[(2 * 5 + 2) * 4 + 3]).toBe(255);
   });
 });
 

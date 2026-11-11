@@ -9,10 +9,12 @@ export type Asset = {
   idea: string;
   prompt: string;
   seed: number;
-  status: "loading" | "ready" | "error";
-  error?: string;
-  url?: string;
-  blob?: Blob;
+  status: "loading" | "waiting" | "ready" | "error";
+  /** Free tier queue: timestamp when the next attempt runs. */
+  waitUntil?: number | undefined;
+  error?: string | undefined;
+  url?: string | undefined;
+  blob?: Blob | undefined;
 };
 
 export type VideoOptions = { removeSilence: boolean; captions: boolean; vertical: boolean };
@@ -29,7 +31,7 @@ export type VideoJob = {
   stage: string;
   outputName: string;
   savedSeconds: number;
-  finishedAt?: number;
+  finishedAt?: number | undefined;
 };
 
 type HubState = {

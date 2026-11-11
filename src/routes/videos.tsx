@@ -88,13 +88,13 @@ function simulateJob(job: VideoJob): Promise<void> {
   const stages = buildStages(job.options);
   const totalMs = 1400 * stages.length;
   const tick = 120;
-  updateVideo(job.id, { status: "processing", progress: 0, stage: stages[0] });
+  updateVideo(job.id, { status: "processing", progress: 0, stage: stages[0] ?? "" });
   return new Promise((resolve) => {
     let elapsed = 0;
     const timer = setInterval(() => {
       elapsed += tick;
       const progress = Math.min(100, (elapsed / totalMs) * 100);
-      const stage = stages[Math.min(stages.length - 1, Math.floor((progress / 100) * stages.length))];
+      const stage = stages[Math.min(stages.length - 1, Math.floor((progress / 100) * stages.length))] ?? "";
       updateVideo(job.id, { progress, stage });
       if (progress >= 100) {
         clearInterval(timer);

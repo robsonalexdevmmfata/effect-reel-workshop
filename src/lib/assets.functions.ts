@@ -17,10 +17,12 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+type GenerateResult = { dataUrl: string | null; error: string | null; retryAfter: number | null };
+
 /** Fetches a free Pollinations image server-side (the service blocks browser-origin requests). */
 export const generateAssetImage = createServerFn({ method: "POST" })
   .inputValidator((data) => inputSchema.parse(data))
-  .handler(async ({ data }): Promise<{ dataUrl: string | null; error: string | null }> => {
+  .handler(async ({ data }): Promise<GenerateResult> => {
     const url =
       `https://image.pollinations.ai/prompt/${encodeURIComponent(data.prompt)}` +
       `?width=${data.width}&height=${data.height}&seed=${data.seed}`;
@@ -31,16 +33,21 @@ export const generateAssetImage = createServerFn({ method: "POST" })
       });
       const type = res.headers.get("content-type") ?? "";
       if (!res.ok || !type.startsWith("image/")) {
-        console.error("pollinations failed", res.status, (await res.text()).slice(0, 200));
-        return {
-          dataUrl: null,
-          error: res.status === 429 ? "Limite gratuito atingido, tente em instantes." : "Serviço de imagem indisponível.",
-        };
+        const body = (await res.text()).slice(0, 400);
+        // Free tier: 1 image every ~45s per IP; tell the client how long to wait.
+        if (res.status === 402 || res.status === 429) {
+          const header = Number(res.headers.get("retry-after"));
+          const match = /retry after (\d+)s/i.exec(body);
+          const retryAfter = Number.isFinite(header) && header > 0 ? header : Number(match?.[1] ?? 45);
+          return { dataUrl: null, error: "Fila do plano gratuito", retryAfter };
+        }
+        console.error("pollinations failed", res.status, body);
+        return { dataUrl: null, error: "Serviço de imagem indisponível.", retryAfter: null };
       }
       const bytes = new Uint8Array(await res.arrayBuffer());
-      return { dataUrl: `data:${type};base64,${toBase64(bytes)}`, error: null };
+      return { dataUrl: `data:${type};base64,${toBase64(bytes)}`, error: null, retryAfter: null };
     } catch (err) {
       console.error("pollinations error", err);
-      return { dataUrl: null, error: "Tempo esgotado ao gerar a imagem." };
+      return { dataUrl: null, error: "Tempo esgotado ao gerar a imagem.", retryAfter: null };
     }
   });

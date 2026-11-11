@@ -28,3 +28,10 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+## Project rules
+
+- Shared dashboard state (assets, video jobs, usage counters) lives in `src/lib/hub-store.ts` (useSyncExternalStore); selectors must return existing references or primitives, never new objects, to avoid render loops.
+- Free image generation goes through the `generateAssetImage` server function, because Pollinations blocks browser-origin requests and rate-limits per IP; the client waits `retryAfter` and retries.
+- Transparency is produced client-side by border flood-fill background removal (`src/lib/chroma.ts`), so prompts must ask for a plain flat background.
+- Video processing in the browser is a simulation; real rendering is the Colab script in `src/lib/colab-script.ts`.

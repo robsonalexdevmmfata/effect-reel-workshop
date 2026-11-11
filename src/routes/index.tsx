@@ -3,6 +3,7 @@ import { useServerFn } from "@tanstack/react-start";
 import JSZip from "jszip";
 import {
   AlertTriangle,
+  Check,
   Download,
   Eye,
   ImageIcon,
@@ -11,10 +12,11 @@ import {
   Package,
   RefreshCw,
   Sparkles,
+  Timer,
   Trash2,
   Wand2,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/hub/app-shell";
@@ -23,7 +25,14 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ASSET_KINDS, STYLES, buildAssetPrompt, slugify, type StyleId } from "@/lib/asset-presets";
+import {
+  ASSET_KINDS,
+  STYLES,
+  buildAssetPrompt,
+  slugify,
+  type AssetKind,
+  type StyleId,
+} from "@/lib/asset-presets";
 import { generateAssetImage } from "@/lib/assets.functions";
 import { toTransparentPng } from "@/lib/chroma";
 import { getHub, setHub, updateAsset, useHub, type Asset } from "@/lib/hub-store";
@@ -58,6 +67,8 @@ function downloadBlob(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 function fileNameFor(a: Asset) {
   return `${slugify(a.idea)}_${a.kind}_${a.seed}.png`;
 }
@@ -66,6 +77,7 @@ function AssetsPage() {
   const assets = useHub((s) => s.assets);
   const [idea, setIdea] = useState("");
   const [style, setStyle] = useState<StyleId>("vector2d");
+  const [kinds, setKinds] = useState<AssetKind[]>(["main", "frame"]);
   const [busy, setBusy] = useState(false);
   const [zipping, setZipping] = useState(false);
   const [preview, setPreview] = useState<Asset | null>(null);
@@ -74,23 +86,34 @@ function AssetsPage() {
   const ready = assets.filter((a) => a.status === "ready");
 
   async function runOne(asset: Asset): Promise<boolean> {
-    updateAsset(asset.id, { status: "loading", error: undefined });
-    try {
-      const res = await generate({
-        data: { prompt: asset.prompt, seed: asset.seed, width: 1024, height: 1024 },
-      });
-      if (!res.dataUrl) {
+    // The free tier allows ~1 image every 45s, so wait and retry automatically.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      updateAsset(asset.id, { status: "loading", error: undefined, waitUntil: undefined });
+      try {
+        const res = await generate({
+          data: { prompt: asset.prompt, seed: asset.seed, width: 1024, height: 1024 },
+        });
+        if (res.dataUrl) {
+          const blob = await toTransparentPng(res.dataUrl);
+          updateAsset(asset.id, { status: "ready", blob, url: URL.createObjectURL(blob) });
+          setHub((s) => ({ ...s, imagesGenerated: s.imagesGenerated + 1 }));
+          return true;
+        }
+        if (res.retryAfter) {
+          const waitMs = (res.retryAfter + 1) * 1000;
+          updateAsset(asset.id, { status: "waiting", waitUntil: Date.now() + waitMs });
+          await sleep(waitMs);
+          continue;
+        }
         updateAsset(asset.id, { status: "error", error: res.error ?? "Falha na geração" });
         return false;
+      } catch {
+        updateAsset(asset.id, { status: "error", error: "Falha de conexão" });
+        return false;
       }
-      const blob = await toTransparentPng(res.dataUrl);
-      updateAsset(asset.id, { status: "ready", blob, url: URL.createObjectURL(blob) });
-      setHub((s) => ({ ...s, imagesGenerated: s.imagesGenerated + 1 }));
-      return true;
-    } catch {
-      updateAsset(asset.id, { status: "error", error: "Falha de conexão" });
-      return false;
     }
+    updateAsset(asset.id, { status: "error", error: "Fila gratuita ocupada. Tente de novo." });
+    return false;
   }
 
   async function handleGenerate() {
@@ -98,9 +121,13 @@ function AssetsPage() {
       toast.error("Descreva a ideia do filtro", { description: "Use pelo menos 3 caracteres." });
       return;
     }
+    if (!kinds.length) {
+      toast.error("Escolha pelo menos um tipo de asset");
+      return;
+    }
     setBusy(true);
     const seedBase = Math.floor(Math.random() * 1_000_000_000);
-    const batch: Asset[] = ASSET_KINDS.map((k, i) => ({
+    const batch: Asset[] = ASSET_KINDS.filter((k) => kinds.includes(k.kind)).map((k, i) => ({
       id: crypto.randomUUID(),
       kind: k.kind,
       label: k.label,
@@ -108,16 +135,19 @@ function AssetsPage() {
       idea: idea.trim(),
       prompt: buildAssetPrompt(idea, style, k.kind),
       seed: seedBase + i,
-      status: "loading",
+      status: "waiting",
     }));
     setHub((s) => ({ ...s, assets: [...batch, ...s.assets] }));
-    toast("Gerando 4 assets…", { description: "Usando Pollinations (gratuito). Leva ~10–30s cada." });
+    toast(`Gerando ${batch.length} asset(s)…`, {
+      description: "Pollinations gratuito: 1 imagem a cada ~45s. Pode sair desta aba.",
+    });
 
     let ok = 0;
     for (const a of batch) if (await runOne(a)) ok++;
     setBusy(false);
 
-    if (ok === batch.length) toast.success("Pacote pronto!", { description: "4 PNGs transparentes gerados." });
+    if (ok === batch.length)
+      toast.success("Pacote pronto!", { description: `${ok} PNG(s) transparentes gerados.` });
     else if (ok > 0) toast.warning(`${ok} de ${batch.length} assets gerados`, { description: "Use “Tentar de novo” nos que falharam." });
     else toast.error("Não foi possível gerar os assets", { description: "O serviço gratuito pode estar ocupado. Tente novamente." });
   }
@@ -158,7 +188,7 @@ function AssetsPage() {
         "Como usar no Effect House:\n1. Abra seu projeto no Effect House.\n2. Arraste a pasta Textures para o painel Assets.\n3. Use as molduras em Face Mask / Image e as partículas como overlay 2D.\n",
       );
       const blob = await zip.generateAsync({ type: "blob" });
-      downloadBlob(blob, `effect-house-pack_${slugify(list[0].idea)}.zip`);
+      downloadBlob(blob, `effect-house-pack_${slugify(list[0]?.idea ?? "filtro")}.zip`);
       toast.success("ZIP baixado", { description: `${list.length} texturas prontas para o Effect House.` });
     } catch {
       toast.error("Falha ao montar o ZIP");
@@ -227,12 +257,36 @@ function AssetsPage() {
         </div>
 
         <div className="mt-6 flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-            {ASSET_KINDS.map((k) => (
-              <Badge key={k.kind} variant="outline" className="font-normal">
-                {k.label}
-              </Badge>
-            ))}
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-muted-foreground">Tipos de asset</p>
+            <div className="flex flex-wrap gap-2">
+              {ASSET_KINDS.map((k) => {
+                const on = kinds.includes(k.kind);
+                return (
+                  <button
+                    key={k.kind}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() =>
+                      setKinds((prev) => (on ? prev.filter((x) => x !== k.kind) : [...prev, k.kind]))
+                    }
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                      on
+                        ? "border-primary/60 bg-primary/10 text-primary"
+                        : "border-border text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {on && <Check className="size-3" />}
+                    {k.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Timer className="size-3.5" />
+              Tempo estimado: ~{Math.max(1, Math.ceil((kinds.length * 45) / 60))} min no plano gratuito
+            </p>
           </div>
           <Button variant="neon" size="lg" onClick={handleGenerate} disabled={busy} className="h-12 px-6">
             {busy ? <Loader2 className="animate-spin" /> : <Wand2 />}
@@ -362,6 +416,19 @@ function AssetCard({
   return (
     <div className="group overflow-hidden rounded-2xl border border-border bg-card transition-colors hover:border-primary/50">
       <div className="bg-checker relative aspect-square">
+        {asset.status === "waiting" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/80 p-4 text-center">
+            <Timer className="size-6 text-warning" />
+            {asset.waitUntil ? (
+              <>
+                <Countdown until={asset.waitUntil} />
+                <p className="text-[11px] text-muted-foreground">Fila do plano gratuito</p>
+              </>
+            ) : (
+              <p className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">Na fila</p>
+            )}
+          </div>
+        )}
         {asset.status === "loading" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 overflow-hidden bg-background/70">
             <div className="absolute inset-x-0 h-1/3 animate-scan bg-gradient-to-b from-transparent via-primary/15 to-transparent" />
@@ -404,4 +471,14 @@ function AssetCard({
       </div>
     </div>
   );
+}
+
+function Countdown({ until }: { until: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, []);
+  const left = Math.max(0, Math.ceil((until - now) / 1000));
+  return <p className="font-mono text-lg font-bold text-warning">{left}s</p>;
 }
